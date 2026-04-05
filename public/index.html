@@ -434,7 +434,7 @@ function createExplosion(x, y, killer) {
                 if (e.lives <= 0) {
                     e.alive = false; 
                     addLog(`💀 <b>${e.name}</b> bị tiêu diệt!`, "death");
-                    if (killer && killer.id !== e.id && !(gameMode === 'pvai' && killer.isAI && e.isAI)) killer.score += 100;
+                    if (killer && killer.id !== e.id) killer.score += 100;
                 } else { 
                     e.invulnerable = true; 
                     setTimeout(() => e.invulnerable = false, 2000); 
@@ -578,12 +578,13 @@ function bfsSearch(startX, startY, targetType, dangerMap, selfId) {
             }
         }
         if (targetType === "PLAYER") {
-            let target = entities.find(e => (!e.isAI || gameMode==='aivai') && e.id !== selfId && e.alive && Math.round(e.x) === curr.x && Math.round(e.y) === curr.y);
+            // [CẬP NHẬT] AI nhắm mục tiêu bình đẳng: Bất cứ ai còn sống và không phải chính nó đều là kẻ thù
+            let target = entities.find(e => e.id !== selfId && e.alive && Math.round(e.x) === curr.x && Math.round(e.y) === curr.y);
             if (target) return curr.path;
         }
 
-        let maxDepth = (targetType === "PLAYER") ? 30 : 12;
-        if (curr.path.length > maxDepth) continue; // Giới hạn độ sâu để tối ưu
+        let maxDepth = (targetType === "PLAYER") ? Math.floor((MAP_SIZE * MAP_SIZE) / 2) : Math.floor((MAP_SIZE * MAP_SIZE) / 3);
+        if (curr.path.length > maxDepth) continue;
 
         [[0, -1], [0, 1], [-1, 0], [1, 0]].forEach(d => {
             let nx = curr.x + d[0], ny = curr.y + d[1];
@@ -606,7 +607,8 @@ function canAttackPlayer(ai, dangerMap) {
     if (ai.activeBombs >= ai.maxBombs) return false;
     let ax = Math.round(ai.x), ay = Math.round(ai.y);
     
-    let targets = entities.filter(e => e.alive && e.id !== ai.id && (!e.isAI || gameMode === 'aivai'));
+    // [CẬP NHẬT] Lọc danh sách con mồi bình đẳng (bỏ điều kiện ưu tiên người)
+    let targets = entities.filter(e => e.alive && e.id !== ai.id);
     for (let p of targets) {
         let px = Math.round(p.x), py = Math.round(p.y);
         if (ax === px && Math.abs(ay - py) <= ai.bombRadius) {
@@ -687,11 +689,12 @@ function runAI_DecisionTree(ai) {
         setAIState(ai, "TRUY ĐUỔI MỤC TIÊU", "attack");
         ai.x = pathToPlayer[0].x; ai.y = pathToPlayer[0].y;
         
-        // Cập nhật bộ nhớ để nếu mất dấu sẽ không quay đầu ngớ ngẩn
-        ai.lastPatrolX = ax; 
-        ai.lastPatrolY = ay; 
+        // Cập nhật bộ nhớ đường đi
+        if (!ai.patrolHistory) ai.patrolHistory = [];
+        ai.patrolHistory.push({x: ax, y: ay});
+        if (ai.patrolHistory.length > 8) ai.patrolHistory.shift(); 
     } else {
-        setAIState(ai, "ĐI TUẦN NGẪU NHIÊN", "system");
+        setAIState(ai, "ĐI TUẦN MỞ RỘNG", "system");
         let safeDirs = [[0, -1], [0, 1], [-1, 0], [1, 0]].filter(d => {
             let nx = ax + d[0], ny = ay + d[1];
             return nx >= 0 && nx < MAP_SIZE && ny >= 0 && ny < MAP_SIZE && 
@@ -700,19 +703,21 @@ function runAI_DecisionTree(ai) {
         });
 
         if (safeDirs.length > 0) {
-            // FIX LOGIC: Lọc bỏ ô vừa đi qua (tránh đi lùi)
+            if (!ai.patrolHistory) ai.patrolHistory = [];
+
+            // [CẬP NHẬT] Lọc bỏ những ô đã đi qua trong bộ nhớ 8 bước gần nhất (chống kẹt vòng lặp)
             let forwardDirs = safeDirs.filter(d => {
                 let nx = ax + d[0], ny = ay + d[1];
-                return !(ai.lastPatrolX === nx && ai.lastPatrolY === ny);
+                return !ai.patrolHistory.some(pos => pos.x === nx && pos.y === ny);
             });
 
-            // Nếu có đường tiến lên/rẽ ngang thì ưu tiên. Nếu lỡ đi vào ngõ cụt thì đành quay đầu
+            // Nếu đi vào ngõ cụt và tất cả đường đều đã có trong lịch sử thì mới cho phép quay đầu
             let choices = forwardDirs.length > 0 ? forwardDirs : safeDirs;
             let rand = choices[Math.floor(Math.random() * choices.length)];
             
-            // Lưu lại vị trí hiện tại TRƯỚC KHI di chuyển sang ô mới
-            ai.lastPatrolX = ax; 
-            ai.lastPatrolY = ay;
+            // Lưu lại vị trí hiện tại vào lịch sử
+            ai.patrolHistory.push({x: ax, y: ay});
+            if (ai.patrolHistory.length > 8) ai.patrolHistory.shift(); 
 
             ai.x = ax + rand[0]; ai.y = ay + rand[1];
         }
