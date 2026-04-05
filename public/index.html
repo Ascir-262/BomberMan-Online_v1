@@ -347,7 +347,8 @@ function showGameOver(title) {
 window.addEventListener('keydown', e => { keys[e.key] = true; if (!isPaused && e.key.toLowerCase() === 'j') { let p1 = entities.find(en => en.id === 0 && !en.isAI); if (p1) dropBomb(p1);
     if (typeof socket !== 'undefined' && myPlayerId !== null) {
             socket.emit('placeBomb', { playerId: myPlayerId });
- } };
+ } }
+ });
 window.addEventListener('keyup', e => keys[e.key] = false);
 
 function handleInput() {
