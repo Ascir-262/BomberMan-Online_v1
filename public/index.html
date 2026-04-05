@@ -178,7 +178,13 @@ function setupMobileControls() {
     document.querySelectorAll('.d-btn, .action-btn').forEach(btn => {
         const key = btn.getAttribute('data-key');
         btn.addEventListener('touchstart', (e) => { e.preventDefault(); keys[key] = true; btn.style.opacity = '0.5'; 
-            if (key === 'j') { let p1 = entities.find(en => en.id === 0 && !en.isAI); if (p1) dropBomb(p1); }
+            if (key === 'j') { 
+    let myPlayer = entities.find(en => en.id === myPlayerId && !en.isAI); 
+    if (myPlayer) {
+        dropBomb(myPlayer);
+        if (typeof socket !== 'undefined' && myPlayerId !== null) socket.emit('placeBomb', { playerId: myPlayerId });
+    }
+}
         }, {passive: false});
         btn.addEventListener('touchend', (e) => { e.preventDefault(); keys[key] = false; btn.style.opacity = '1'; }, {passive: false});
     });
@@ -204,17 +210,54 @@ const canvas = document.getElementById('gameCanvas'); const ctx = canvas.getCont
 let map = [], items = {}, bombs = [], entities = [], gameMode = '', isPaused = false, gameLoopId = null, setupAI = 1;
 const els = { mainMenu: document.getElementById('main-menu'), setupMenu: document.getElementById('setup-menu'), pauseMenu: document.getElementById('pause-menu'), gameOver: document.getElementById('game-over'), scoreboard: document.getElementById('scoreboard'), aiSlider: document.getElementById('ai-slider'), aiCountDisplay: document.getElementById('ai-count-display'), setupTitle: document.getElementById('setup-title'), aiSelector: document.getElementById('ai-selector'), resultTitle: document.getElementById('result-title'), resultList: document.getElementById('result-list'), mapSizeSelect: document.getElementById('map-size-select') };
 
-//Sever//----------------------------------
+// Sever//----------------------------------
 const socket = io();
-let myPlayerId = null; // Xác định mình là P1 hay P2
+let myPlayerId = null; 
 
-// Lắng nghe server khởi tạo
 socket.on('init', (data) => {
     myPlayerId = data.playerId;
     addLog(`Đã kết nối server với tư cách P${myPlayerId + 1}`, 'system');
+
+    // Nếu P2 vào sau mà P1 đã tạo trận PvP, tự động load map và vào game
+    if (data.gameState && data.gameState.gameMode === 'pvp') {
+        MAP_SIZE = data.gameState.mapSize;
+        canvas.width = canvas.height = MAP_SIZE * TILE;
+        map = data.gameState.map;
+        gameMode = data.gameState.gameMode;
+        bombs = []; items = {};
+        
+        els.mainMenu.classList.add('hidden');
+        els.setupMenu.classList.add('hidden');
+        
+        entities = []; let pos = getStartPositions();
+        entities.push(new Entity(0, false, pos[0]), new Entity(1, false, pos[1]));
+        
+        updateScoreboard(); isPaused = false; gameLoop();
+        addLog("Đã đồng bộ map với phòng!", "info");
+    }
 });
 
-// Lắng nghe người chơi khác di chuyển
+// THÊM SỰ KIỆN NÀY: Nếu P2 đang đứng ở Menu mà P1 bấm Start
+socket.on('gameSynced', (data) => {
+    if (data.gameMode === 'pvp') {
+        MAP_SIZE = data.mapSize;
+        canvas.width = canvas.height = MAP_SIZE * TILE;
+        map = data.map;
+        gameMode = data.gameMode;
+        bombs = []; items = {};
+        
+        els.mainMenu.classList.add('hidden');
+        els.setupMenu.classList.add('hidden');
+        els.gameOver.classList.add('hidden');
+        
+        entities = []; let pos = getStartPositions();
+        entities.push(new Entity(0, false, pos[0]), new Entity(1, false, pos[1]));
+        
+        updateScoreboard(); isPaused = false; gameLoop();
+        addLog("Đã đồng bộ map từ Host!", "info");
+    }
+});
+
 socket.on('playerMoved', (data) => {
     let otherPlayer = entities.find(e => e.id === data.playerId && !e.isAI);
     if (otherPlayer) {
@@ -224,12 +267,9 @@ socket.on('playerMoved', (data) => {
     }
 });
 
-// Lắng nghe người chơi khác đặt bom
 socket.on('bombPlaced', (data) => {
     let otherPlayer = entities.find(e => e.id === data.playerId && !e.isAI);
-    if (otherPlayer) {
-        dropBomb(otherPlayer); // Gọi hàm dropBomb hiện có của bạn
-    }
+    if (otherPlayer) { dropBomb(otherPlayer); }
 });
 //-----------------------------------------------------
 
@@ -279,7 +319,9 @@ function startGame() {
     if (gameMode === 'pvp') { entities.push(new Entity(0, false, pos[0]), new Entity(1, false, pos[1])); } 
     else if (gameMode === 'pvai') { entities.push(new Entity(0, false, pos[0])); for(let i=0; i<setupAI; i++) entities.push(new Entity(i+1, true, pos[i+1])); } 
     else { for(let i=0; i<setupAI; i++) entities.push(new Entity(i, true, pos[i])); }
-    
+    if (gameMode === 'pvp') {
+        socket.emit('syncGame', { map: map, mapSize: MAP_SIZE, gameMode: gameMode });
+    }
     updateScoreboard(); isPaused = false; gameLoop();
 }
 
@@ -344,25 +386,37 @@ function showGameOver(title) {
     els.gameOver.classList.remove('hidden');
 }
 
-window.addEventListener('keydown', e => { keys[e.key] = true; if (!isPaused && e.key.toLowerCase() === 'j') { let p1 = entities.find(en => en.id === 0 && !en.isAI); if (p1) dropBomb(p1);
-    if (typeof socket !== 'undefined' && myPlayerId !== null) {
-            socket.emit('placeBomb', { playerId: myPlayerId });
- } }
- });
+window.addEventListener('keydown', e => { 
+    keys[e.key] = true; 
+    if (!isPaused && e.key.toLowerCase() === 'j') { 
+        let myPlayer = entities.find(en => en.id === myPlayerId && !en.isAI); 
+        if (myPlayer) {
+            dropBomb(myPlayer);
+            if (typeof socket !== 'undefined' && myPlayerId !== null) {
+                socket.emit('placeBomb', { playerId: myPlayerId });
+            }
+        } 
+    }
+});
 window.addEventListener('keyup', e => keys[e.key] = false);
 
 function handleInput() {
-    let now = Date.now(), p1 = entities.find(e => e.id === 0 && !e.isAI && e.alive);
-    if (p1) {
-        p1.pickUpItem();
-        if (now - p1.lastMove > p1.delay) {
-            let nx = p1.x, ny = p1.y, moved = false;
-            if (keys['w']) { ny--; p1.direction = 'up'; moved = true; } else if (keys['s']) { ny++; p1.direction = 'down'; moved = true; }
-            else if (keys['a']) { nx--; p1.direction = 'left'; moved = true; } else if (keys['d']) { nx++; p1.direction = 'right'; moved = true; }
-            if (moved && isValidMove(nx, ny, p1.id)) { p1.x = nx; p1.y = ny; p1.lastMove = now;
-                // BÁO CHO SERVER BIẾT MÌNH ĐÃ DI CHUYỂN
-    socket.emit('playerMove', { x: p1.x, y: p1.y, direction: p1.direction });
-             }
+    let now = Date.now();
+    let myPlayer = entities.find(e => e.id === myPlayerId && !e.isAI && e.alive);
+    if (myPlayer) {
+        myPlayer.pickUpItem();
+        if (now - myPlayer.lastMove > myPlayer.delay) {
+            let nx = myPlayer.x, ny = myPlayer.y, moved = false;
+            if (keys['w']) { ny--; myPlayer.direction = 'up'; moved = true; } 
+            else if (keys['s']) { ny++; myPlayer.direction = 'down'; moved = true; }
+            else if (keys['a']) { nx--; myPlayer.direction = 'left'; moved = true; } 
+            else if (keys['d']) { nx++; myPlayer.direction = 'right'; moved = true; }
+            
+            if (moved && isValidMove(nx, ny, myPlayer.id)) { 
+                myPlayer.x = nx; myPlayer.y = ny; myPlayer.lastMove = now;
+                // Phát tín hiệu lên Server
+                socket.emit('playerMove', { x: myPlayer.x, y: myPlayer.y, direction: myPlayer.direction });
+            }
         }
     }
 }

@@ -11,6 +11,7 @@ app.use(express.static('public'));
 
 // Lưu trữ trạng thái người chơi
 const players = {};
+let currentGameState = null;
 
 io.on('connection', (socket) => {
     console.log(`Người chơi kết nối: ${socket.id}`);
@@ -24,10 +25,19 @@ io.on('connection', (socket) => {
     };
 
     // Gửi dữ liệu khởi tạo cho client vừa kết nối
-    socket.emit('init', { playerId: players[socket.id].playerId, players });
+    socket.emit('init', { 
+        playerId: players[socket.id].playerId, 
+        players, 
+        gameState: currentGameState 
+    });
 
     // Thông báo cho các client khác có người mới vào
     socket.broadcast.emit('playerJoined', players[socket.id]);
+
+    socket.on('syncGame', (data) => {
+        currentGameState = data; // Server lưu lại map
+        socket.broadcast.emit('gameSynced', data); // Báo cho các client khác
+    });
 
     // Nhận cập nhật di chuyển từ client
     socket.on('playerMove', (data) => {
@@ -44,6 +54,10 @@ io.on('connection', (socket) => {
     socket.on('disconnect', () => {
         console.log(`Người chơi ngắt kết nối: ${socket.id}`);
         delete players[socket.id];
+        // CẬP NHẬT: Nếu phòng trống thì xóa map cũ đi
+        if (Object.keys(players).length === 0) {
+            currentGameState = null; 
+        }
         io.emit('playerLeft', socket.id);
     });
 });
