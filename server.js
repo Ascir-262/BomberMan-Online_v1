@@ -49,6 +49,7 @@ io.on('connection', (socket) => {
     socket.on('placeBomb', (data) => {
         socket.broadcast.emit('bombPlaced', data);
     });
+    
 
     // Trung chuyển dữ liệu rớt đồ (chỉ P1 gửi)
     socket.on('syncItem', (data) => {
@@ -58,6 +59,11 @@ io.on('connection', (socket) => {
     // Trung chuyển dữ liệu nhặt đồ và cập nhật điểm số
     socket.on('playerPickedItem', (data) => {
         socket.broadcast.emit('itemPickedByOther', data);
+    });
+
+    // Trung chuyển trạng thái mất máu / chết của người chơi hoặc AI
+    socket.on('playerDamaged', (data) => {
+        socket.broadcast.emit('playerDamagedSynced', data);
     });
 
     // Xử lý ngắt kết nối

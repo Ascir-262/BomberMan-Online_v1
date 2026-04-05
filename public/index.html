@@ -303,6 +303,30 @@ socket.on('itemPickedByOther', (data) => {
         updateScoreboard();
     }
 });
+
+// Lắng nghe sự kiện đối thủ (hoặc AI do Host tính) bị dính bom
+socket.on('playerDamagedSynced', (data) => {
+    let target = entities.find(e => e.id === data.targetId);
+    if (target) {
+        target.lives = data.lives;
+        target.alive = data.alive;
+        
+        if (!target.alive) {
+            addLog(`💀 <b>${target.name}</b> bị tiêu diệt!`, "death");
+            // Cập nhật điểm cho người giết
+            if (data.killerId !== null) {
+                let killer = entities.find(e => e.id === data.killerId);
+                if (killer && killer.id !== target.id) killer.score += 100;
+            }
+        } else {
+            // Nếu chưa chết, bật chế độ tàng hình/bất tử tạm thời
+            target.invulnerable = true;
+            setTimeout(() => target.invulnerable = false, 2000);
+        }
+        updateScoreboard();
+        checkWinCondition();
+    }
+});
 //-----------------------------------------------------
 
 function showSetup(mode) { gameMode = mode; els.mainMenu.classList.add('hidden'); els.setupMenu.classList.remove('hidden'); els.setupTitle.innerText = mode === 'pvp' ? "Người vs Người" : (mode === 'pvai' ? "Người vs AI" : "AI vs AI"); els.aiSelector.style.display = mode === 'pvp' ? 'none' : 'block'; els.aiSlider.max = mode === 'pvai' ? 3 : 4; updateSlider(); }
@@ -397,21 +421,46 @@ function explodeBomb(b) {
 function createExplosion(x, y, killer) {
     entities.forEach(e => {
         if (e.alive && Math.round(e.x) === x && Math.round(e.y) === y && !e.invulnerable) {
-            e.lives--;
-            if (e.lives <= 0) {
-                e.alive = false; addLog(`💀 <b>${e.name}</b> bị tiêu diệt!`, "death");
-                if (killer && killer.id !== e.id && !(gameMode === 'pvai' && killer.isAI && e.isAI)) killer.score += 100;
-            } else { e.invulnerable = true; setTimeout(() => e.invulnerable = false, 2000); }
-            checkWinCondition();
+            
+            // LOGIC FIX DESYNC: Phân quyền ai được xử lý va chạm
+            // 1. Nếu đây là nhân vật của mình
+            let isMyPlayer = (e.id === myPlayerId && !e.isAI);
+            // 2. Nếu đây là AI và mình là Host (P1 / id = 0) thì mình đại diện tính toán luôn cho AI
+            let isHostControllingAI = (e.isAI && (gameMode !== 'pvp' || myPlayerId === 0));
+
+            // Chỉ thực hiện trừ máu nếu thỏa mãn quyền trên
+            if (isMyPlayer || isHostControllingAI) {
+                e.lives--;
+                if (e.lives <= 0) {
+                    e.alive = false; 
+                    addLog(`💀 <b>${e.name}</b> bị tiêu diệt!`, "death");
+                    if (killer && killer.id !== e.id && !(gameMode === 'pvai' && killer.isAI && e.isAI)) killer.score += 100;
+                } else { 
+                    e.invulnerable = true; 
+                    setTimeout(() => e.invulnerable = false, 2000); 
+                }
+                
+                checkWinCondition();
+
+                // Bắn tín hiệu máu/chết này sang các máy khác (nếu đang chơi qua mạng)
+                if (typeof socket !== 'undefined' && myPlayerId !== null) {
+                    socket.emit('playerDamaged', { 
+                        targetId: e.id, 
+                        lives: e.lives, 
+                        alive: e.alive, 
+                        killerId: killer ? killer.id : null 
+                    });
+                }
+            }
         }
     });
+
     let oldType = map[y][x]; map[y][x] = EXPLOSION;
     
     // Nếu chơi Multiplayer (P1 làm Host quay random), hoặc chơi với AI
     if (gameMode !== 'pvp' || myPlayerId === 0) {
         let dropItem = oldType === BRICK && Math.random() < 0.5 ? (Math.random() < 0.33 ? ITEM_TYPES.EXTRA_BOMB : (Math.random() < 0.66 ? ITEM_TYPES.EXTRA_RADIUS : ITEM_TYPES.EXTRA_LIFE)) : null;
         
-        // P1 gửi kết quả rớt đồ cho P2
         if (gameMode === 'pvp' && typeof socket !== 'undefined') {
             socket.emit('syncItem', { x, y, type: dropItem });
         }
@@ -423,8 +472,6 @@ function createExplosion(x, y, killer) {
             } 
         }, 500);
     } else {
-        // P2 sẽ không tự random, chỉ chờ 550ms rồi tự xóa hiệu ứng nổ. 
-        // (Sẽ bị ghi đè nếu nhận được data từ P1)
         setTimeout(() => { 
             if (map[y][x] === EXPLOSION) map[y][x] = EMPTY; 
         }, 550); 
