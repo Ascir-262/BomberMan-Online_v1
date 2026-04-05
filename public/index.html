@@ -582,7 +582,8 @@ function bfsSearch(startX, startY, targetType, dangerMap, selfId) {
             if (target) return curr.path;
         }
 
-        if (curr.path.length > 12) continue; // Giới hạn độ sâu để tối ưu
+        let maxDepth = (targetType === "PLAYER") ? 30 : 12;
+        if (curr.path.length > maxDepth) continue; // Giới hạn độ sâu để tối ưu
 
         [[0, -1], [0, 1], [-1, 0], [1, 0]].forEach(d => {
             let nx = curr.x + d[0], ny = curr.y + d[1];
@@ -685,6 +686,10 @@ function runAI_DecisionTree(ai) {
     if (pathToPlayer && pathToPlayer.length > 0) {
         setAIState(ai, "TRUY ĐUỔI MỤC TIÊU", "attack");
         ai.x = pathToPlayer[0].x; ai.y = pathToPlayer[0].y;
+        
+        // Cập nhật bộ nhớ để nếu mất dấu sẽ không quay đầu ngớ ngẩn
+        ai.lastPatrolX = ax; 
+        ai.lastPatrolY = ay; 
     } else {
         setAIState(ai, "ĐI TUẦN NGẪU NHIÊN", "system");
         let safeDirs = [[0, -1], [0, 1], [-1, 0], [1, 0]].filter(d => {
@@ -693,8 +698,22 @@ function runAI_DecisionTree(ai) {
                    (map[ny][nx] === EMPTY || map[ny][nx] === ITEM) && 
                    !dangerMap[ny][nx] && !isOccupied(nx, ny, ai.id);
         });
+
         if (safeDirs.length > 0) {
-            let rand = safeDirs[Math.floor(Math.random() * safeDirs.length)];
+            // FIX LOGIC: Lọc bỏ ô vừa đi qua (tránh đi lùi)
+            let forwardDirs = safeDirs.filter(d => {
+                let nx = ax + d[0], ny = ay + d[1];
+                return !(ai.lastPatrolX === nx && ai.lastPatrolY === ny);
+            });
+
+            // Nếu có đường tiến lên/rẽ ngang thì ưu tiên. Nếu lỡ đi vào ngõ cụt thì đành quay đầu
+            let choices = forwardDirs.length > 0 ? forwardDirs : safeDirs;
+            let rand = choices[Math.floor(Math.random() * choices.length)];
+            
+            // Lưu lại vị trí hiện tại TRƯỚC KHI di chuyển sang ô mới
+            ai.lastPatrolX = ax; 
+            ai.lastPatrolY = ay;
+
             ai.x = ax + rand[0]; ai.y = ay + rand[1];
         }
     }
