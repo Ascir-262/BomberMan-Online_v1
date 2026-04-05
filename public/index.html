@@ -271,6 +271,38 @@ socket.on('bombPlaced', (data) => {
     let otherPlayer = entities.find(e => e.id === data.playerId && !e.isAI);
     if (otherPlayer) { dropBomb(otherPlayer); }
 });
+
+// Lắng nghe sự kiện vật phẩm rơi từ Host (P1)
+socket.on('itemSynced', (data) => {
+    setTimeout(() => {
+        // Sau khi bom nổ xong (500ms), gắn vật phẩm P1 gửi vào map của P2
+        if (map[data.y][data.x] === EXPLOSION || map[data.y][data.x] === EMPTY) {
+            if (data.type) {
+                map[data.y][data.x] = ITEM;
+                items[`${data.x},${data.y}`] = data.type;
+            } else {
+                map[data.y][data.x] = EMPTY;
+            }
+        }
+    }, 500);
+});
+
+// Lắng nghe sự kiện đối thủ nhặt đồ
+socket.on('itemPickedByOther', (data) => {
+    // 1. Xóa vật phẩm bị người kia ăn khỏi bản đồ của mình
+    map[data.y][data.x] = EMPTY;
+    delete items[`${data.x},${data.y}`];
+    
+    // 2. Cập nhật chỉ số và điểm số cho nhân vật kia trên Scoreboard
+    let otherPlayer = entities.find(e => e.id === data.playerId);
+    if (otherPlayer) {
+        otherPlayer.score = data.stats.score;
+        otherPlayer.maxBombs = data.stats.maxBombs;
+        otherPlayer.bombRadius = data.stats.bombRadius;
+        otherPlayer.lives = data.stats.lives;
+        updateScoreboard();
+    }
+});
 //-----------------------------------------------------
 
 function showSetup(mode) { gameMode = mode; els.mainMenu.classList.add('hidden'); els.setupMenu.classList.remove('hidden'); els.setupTitle.innerText = mode === 'pvp' ? "Người vs Người" : (mode === 'pvai' ? "Người vs AI" : "AI vs AI"); els.aiSelector.style.display = mode === 'pvp' ? 'none' : 'block'; els.aiSlider.max = mode === 'pvai' ? 3 : 4; updateSlider(); }
@@ -303,6 +335,12 @@ class Entity {
             let type = items[`${tx},${ty}`];
             if (type === ITEM_TYPES.EXTRA_BOMB) this.maxBombs++; if (type === ITEM_TYPES.EXTRA_RADIUS) this.bombRadius++; if (type === ITEM_TYPES.EXTRA_LIFE) this.lives++;
             this.score += 50; map[ty][tx] = EMPTY; delete items[`${tx},${ty}`]; updateScoreboard();
+            if (typeof socket !== 'undefined' && this.id === myPlayerId) {
+                socket.emit('playerPickedItem', {
+                    playerId: this.id, x: tx, y: ty,
+                    stats: { score: this.score, maxBombs: this.maxBombs, bombRadius: this.bombRadius, lives: this.lives }
+                });
+            }
         }
     }
 }
@@ -368,8 +406,29 @@ function createExplosion(x, y, killer) {
         }
     });
     let oldType = map[y][x]; map[y][x] = EXPLOSION;
-    let dropItem = oldType === BRICK && Math.random() < 0.5 ? (Math.random() < 0.33 ? ITEM_TYPES.EXTRA_BOMB : (Math.random() < 0.66 ? ITEM_TYPES.EXTRA_RADIUS : ITEM_TYPES.EXTRA_LIFE)) : null;
-    setTimeout(() => { if (map[y][x] === EXPLOSION) { if (dropItem) { map[y][x] = ITEM; items[`${x},${y}`] = dropItem; } else map[y][x] = EMPTY; } }, 500);
+    
+    // Nếu chơi Multiplayer (P1 làm Host quay random), hoặc chơi với AI
+    if (gameMode !== 'pvp' || myPlayerId === 0) {
+        let dropItem = oldType === BRICK && Math.random() < 0.5 ? (Math.random() < 0.33 ? ITEM_TYPES.EXTRA_BOMB : (Math.random() < 0.66 ? ITEM_TYPES.EXTRA_RADIUS : ITEM_TYPES.EXTRA_LIFE)) : null;
+        
+        // P1 gửi kết quả rớt đồ cho P2
+        if (gameMode === 'pvp' && typeof socket !== 'undefined') {
+            socket.emit('syncItem', { x, y, type: dropItem });
+        }
+        
+        setTimeout(() => { 
+            if (map[y][x] === EXPLOSION) { 
+                if (dropItem) { map[y][x] = ITEM; items[`${x},${y}`] = dropItem; } 
+                else map[y][x] = EMPTY; 
+            } 
+        }, 500);
+    } else {
+        // P2 sẽ không tự random, chỉ chờ 550ms rồi tự xóa hiệu ứng nổ. 
+        // (Sẽ bị ghi đè nếu nhận được data từ P1)
+        setTimeout(() => { 
+            if (map[y][x] === EXPLOSION) map[y][x] = EMPTY; 
+        }, 550); 
+    }
 }
 
 function checkWinCondition() {

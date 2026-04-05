@@ -50,6 +50,16 @@ io.on('connection', (socket) => {
         socket.broadcast.emit('bombPlaced', data);
     });
 
+    // Trung chuyển dữ liệu rớt đồ (chỉ P1 gửi)
+    socket.on('syncItem', (data) => {
+        socket.broadcast.emit('itemSynced', data);
+    });
+
+    // Trung chuyển dữ liệu nhặt đồ và cập nhật điểm số
+    socket.on('playerPickedItem', (data) => {
+        socket.broadcast.emit('itemPickedByOther', data);
+    });
+
     // Xử lý ngắt kết nối
     socket.on('disconnect', () => {
         console.log(`Người chơi ngắt kết nối: ${socket.id}`);
